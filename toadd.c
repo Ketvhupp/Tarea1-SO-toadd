@@ -14,6 +14,7 @@ procesos independientes, no son hijos del mismo padre.*/
 #include <string.h>
 #include <sys/wait.h>
 #include <time.h>
+#include <signal.h>
 
 #include "comun.h"
 
@@ -25,6 +26,18 @@ void responder(const char *texto) {
     write(fd_res, texto, strlen(texto) + 1); /* +1 para incluir el \0 */
     close(fd_res);
 }
+
+/* Función auxiliar para buscar un proceso por su IID.
+   Devuelve el índice en el arreglo o -1 si no lo encuentra. */
+int buscar_proceso(int iid_buscado, proceso lista[], int total) {
+    for (int i = 0; i < total; i++) {
+        if (lista[i].iid == iid_buscado) {
+            return i; // Encontradaa -> devuelve su posición 
+        }
+    }
+    return -1; // No existe ese IID
+}
+
 
 //DAEMON
 int main() {
@@ -78,7 +91,7 @@ int main() {
             continue; //si no se leyó nada, sigue esperando
         }
 
-        // 2. procesar comando
+        // 2. procesar comando START
         if (msg.comando == CMD_START) {
             pid_t pid = fork();
 
@@ -87,6 +100,9 @@ int main() {
                    si no los cerramos, el hijo tiene sus propias copias abiertas
                    de REQ_PIPE y RES_PIPE. eso confunde al toad-cli cuando intenta
                    leer la respuesta porque el pipe nunca queda sin escritores. */
+
+                setpgid(0, 0); // el proceso se convierte en líder de su propio grupo (PGID = su PID)
+
                 char *args[] = {msg.ruta, NULL};
                 execvp(msg.ruta, args);
                 exit(1); // si falla el exec
@@ -110,6 +126,7 @@ int main() {
             }
         }
 
+        //comando PS: responder con la tabla de procesos
         if (msg.comando == CMD_PS) {
             /* armar el texto de respuesta con todos los procesos de la tabla */
             char respuesta[MAX_RESP];
@@ -152,6 +169,61 @@ int main() {
         }
 
         /* aqui iremos agregando los otros comandos (stop, kill, status, zombie) */
+
+        //comando STOP
+        if(msg.comando == CMD_STOP) {
+            int idx = buscar_proceso(msg.iid, procesos, num_procesos);
+
+            if (idx == -1) { //manejo de error
+                responder("Error: IID no encontrado\n");
+                continue;
+            }
+
+            kill(procesos[idx].pid, SIGTERM);
+            procesos[idx].estado = STOPPED;
+            responder("Proceso detenido\n");
+        }
+
+        //comando status, lo mismo que el ps pero para un proceso nmas.
+        if (msg.comando == CMD_STATUS) {
+            int idx = buscar_proceso(msg.iid, procesos, num_procesos);
+            if (idx != -1) {
+                char respuesta[MAX_RESP];
+                
+                // calcula el uptime del proceso
+                time_t seg = time(NULL) - procesos[idx].t_inicio;
+                int hh = (int)(seg / 3600), mm = (int)((seg % 3600) / 60), ss = (int)(seg % 60);
+
+                // traduciendo a texto
+                char *st;
+                if      (procesos[idx].estado == RUNNING) st = "RUNNING";
+                else if (procesos[idx].estado == STOPPED) st = "STOPPED";
+                else if (procesos[idx].estado == ZOMBIE)  st = "ZOMBIE";
+                else                                      st = "FAILED";
+
+                snprintf(respuesta, sizeof(respuesta),
+                        "IID: %d\nPID: %d\nRUTA: %s\nESTADO: %s\nUPTIME: %02d:%02d:%02d\n",
+                        procesos[idx].iid, procesos[idx].pid, procesos[idx].ruta, st, hh, mm, ss);
+                responder(respuesta);
+            } else {
+                responder("Error: No se encontró el IID\n");
+            }
+        }
+
+
+        if (msg.comando == CMD_KILL) { //casi igual al stop 
+            int idx = buscar_proceso(msg.iid, procesos, num_procesos);
+            if (idx != -1) {
+                // el signo negativo en el PID envía la señal a todo el grupo de procesos
+                kill(-procesos[idx].pid, SIGKILL); 
+                
+                procesos[idx].estado = STOPPED; 
+                responder("Proceso y descendientes eliminados (SIGKILL).\n");
+            } else {
+                responder("Error: IID no encontrado.\n");
+            }
+        }
+
     }
 
     return 0;
