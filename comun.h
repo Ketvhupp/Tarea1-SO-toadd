@@ -11,6 +11,7 @@ solo para cambiar el nombre y no haya que escribir el largo tantas veces*/
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <string.h>
+#include <time.h>   /* agregado: necesario para time_t en el struct proceso */
 
 #define REQ_PIPE "/tmp/toad_req"
 #define RES_PIPE "/tmp/toad_res"
@@ -20,26 +21,41 @@ solo para cambiar el nombre y no haya que escribir el largo tantas veces*/
 #define ZOMBIE  3
 #define FAILED  4
 
-//separé los struct entre mensaje y proceso para no mezclar logica interna con comunicacion.
-//no es necesario mandar pid y estado por el pipe.
+/* mismos numeros que antes, solo los deje
+   nombrados aqui para que sea mas facil de leer en el codigo */
+#define CMD_START  1
+#define CMD_STOP   2
+#define CMD_PS     3
+#define CMD_STATUS 4
+#define CMD_KILL   5
+#define CMD_ZOMBIE 6
 
-//solo para el pipe, comunicacion
+/* tamaño maximo del texto de respuesta que toadd manda por el pipe.
+   4096 bytes es suficiente para listar hasta 100 procesos con sus datos, claude me dio el calculop */
+#define MAX_RESP 4096
+
+/* separe los struct entre mensaje y proceso para no mezclar logica interna
+   con comunicacion. no es necesario mandar pid y estado por el pipe. */
+
+/* solo para el pipe, comunicacion */
 typedef struct {
-    int comando; // 1: start, 2: stop, 3: ps, 4: status, 5:kill, 6:zombie
-    char ruta[256]; //para guardar el camino al binario. es el </bin/ls>
-    int iid; //internal ID, el id del proceso al que se le quiere implemetar el comando.
+    int  comando;        /* que quiere hacer: CMD_START, CMD_STOP, etc. */
+    char ruta[256];  /* ruta al binario (solo se usa en start) */
+    int  iid;        /* a que proceso apunta (stop, kill, status) */
 } mensaje;
 
 
-//para guardar procesos. gestion interna
+/* para guardar procesos. gestion interna de toadd */
 typedef struct {
-    int iid; 
-    pid_t pid; //el pid del proceso que se va a ejecutar.
-    char ruta[256]; //para guardar el camino al binario. es el </bin/ls>
-    int estado; //para el comando status, el estado del proceso. 1: running, 2: stopped, 3: zombie
+    int    iid;
+    pid_t  pid;
+    char   ruta[256];
+    int    estado;
+    time_t t_inicio;  /* agregado: momento en que se inicio el proceso.
+                         necesario para calcular el uptime en ps y status */
 } proceso;
 
-/* por qué usar stuct?
-mandamos el formulario completo por el pipe de un solo viaje. viaja en bytes
-si se manda la info suelta, el otro lado no sabe donde empieza el nombre
-del programa y donde termina el ID*/
+/* por que usar struct?
+   mandamos el formulario completo por el pipe de un solo viaje. viaja en bytes.
+   si se manda la info suelta, el otro lado no sabe donde empieza el nombre
+   del programa y donde termina el ID */
