@@ -11,8 +11,7 @@ solo para cambiar el nombre y no haya que escribir el largo tantas veces*/
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <string.h>
-#include <time.h>
-#include <signal.h>
+#include <time.h>   /* agregado: necesario para time_t en el struct proceso */
 
 #define REQ_PIPE "/tmp/toad_req"
 #define RES_PIPE "/tmp/toad_res"
@@ -32,7 +31,7 @@ solo para cambiar el nombre y no haya que escribir el largo tantas veces*/
 #define CMD_ZOMBIE 6
 
 /* tamaño maximo del texto de respuesta que toadd manda por el pipe.
-   4096 bytes es suficiente para listar hasta 100 procesos con sus datos */
+   4096 bytes es suficiente para listar hasta 100 procesos con sus datos, claude me dio el calculop */
 #define MAX_RESP 4096
 
 /* separe los struct entre mensaje y proceso para no mezclar logica interna
@@ -40,10 +39,11 @@ solo para cambiar el nombre y no haya que escribir el largo tantas veces*/
 
 /* solo para el pipe, comunicacion */
 typedef struct {
-    int  comando;    /* que quiere hacer: CMD_START, CMD_STOP, etc. */
+    int  comando;        /* que quiere hacer: CMD_START, CMD_STOP, etc. */
     char ruta[256];  /* ruta al binario (solo se usa en start) */
     int  iid;        /* a que proceso apunta (stop, kill, status) */
 } mensaje;
+
 
 /* para guardar procesos. gestion interna de toadd */
 typedef struct {
@@ -51,11 +51,8 @@ typedef struct {
     pid_t  pid;
     char   ruta[256];
     int    estado;
-    time_t t_inicio;  /* momento en que se inicio el proceso, para calcular uptime */
-    int    detenido;  /* 1 si fue parado a proposito con stop o kill,
-                         0 si esta corriendo o murio solo.
-                         lo usamos para que waitpid no sobreescriba a ZOMBIE
-                         un proceso que ya marcamos como STOPPED. */
+    time_t t_inicio;  /* agregado: momento en que se inicio el proceso.
+                         necesario para calcular el uptime en ps y status */
 } proceso;
 
 /* por que usar struct?
