@@ -11,7 +11,7 @@ solo para cambiar el nombre y no haya que escribir el largo tantas veces*/
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <string.h>
-#include <time.h>   /* agregado: necesario para time_t en el struct proceso */
+#include <time.h>
 
 #define REQ_PIPE "/tmp/toad_req"
 #define RES_PIPE "/tmp/toad_res"
