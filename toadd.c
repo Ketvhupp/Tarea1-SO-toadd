@@ -1,3 +1,4 @@
+#define _POSIX_C_SOURCE 200809L
 /*toadd es un gestor de procesos que corre en background, independiente del terminal desde el que
 fue iniciado. Su responsabilidad es ejecutar, monitorear y terminar otros procesos, manteniendo
 registro de su estado durante toda su vida <- es Daemon */
@@ -27,17 +28,16 @@ void responder(const char *texto) {
     close(fd_res);
 }
 
-/* Función auxiliar para buscar un proceso por su IID.
-   Devuelve el índice en el arreglo o -1 si no lo encuentra. */
+/* funcion auxiliar para buscar un proceso por su IID.
+   devuelve el índice en el arreglo o -1 si no lo encuentra. */
 int buscar_proceso(int iid_buscado, proceso lista[], int total) {
     for (int i = 0; i < total; i++) {
         if (lista[i].iid == iid_buscado) {
-            return i; // Encontradaa -> devuelve su posición 
+            return i; // encontrado -> devuelve su posicion
         }
     }
-    return -1; // No existe ese IID
+    return -1; // no existe ese IID
 }
-
 
 //DAEMON
 int main() {
@@ -70,12 +70,19 @@ int main() {
 
         /* recolectar zombies: revisar si algun hijo termino sin que lo hayamos esperado.
            WNOHANG = no bloquear, solo revisar y seguir.
-           si algun hijo termino, actualizamos su estado en la tabla. */
+
+           el problema que habia antes: cuando stop o kill marcaban el proceso como STOPPED,
+           el waitpid igual lo encontraba muerto y lo sobreescribia a ZOMBIE. 
+           
+           fix: solo marcamos ZOMBIE si el proceso NO fue detenido a proposito.
+           para saber eso, agregamos el campo "detenido" al struct proceso en comun.h.
+           si detenido == 1, el proceso fue parado por stop o kill -> lo dejamos en STOPPED.
+           si detenido == 0, murio solo -> lo marcamos ZOMBIE. */
         pid_t pid_muerto;
         int status;
         while ((pid_muerto = waitpid(-1, &status, WNOHANG)) > 0) {
             for (int i = 0; i < num_procesos; i++) {
-                if (procesos[i].pid == pid_muerto) {
+                if (procesos[i].pid == pid_muerto && procesos[i].detenido == 0) {
                     procesos[i].estado = ZOMBIE;
                 }
             }
@@ -96,13 +103,7 @@ int main() {
             pid_t pid = fork();
 
             if (pid == 0) {
-                /* hijo: cerrar los pipes antes del exec.
-                   si no los cerramos, el hijo tiene sus propias copias abiertas
-                   de REQ_PIPE y RES_PIPE. eso confunde al toad-cli cuando intenta
-                   leer la respuesta porque el pipe nunca queda sin escritores. */
-
-                setpgid(0, 0); // el proceso se convierte en líder de su propio grupo (PGID = su PID)
-
+                setpgid(0, 0); // el proceso se convierte en lider de su propio grupo (PGID = su PID)
                 char *args[] = {msg.ruta, NULL};
                 execvp(msg.ruta, args);
                 exit(1); // si falla el exec
@@ -115,11 +116,10 @@ int main() {
                 procesos[num_procesos].pid      = pid;
                 procesos[num_procesos].estado   = RUNNING;
                 procesos[num_procesos].t_inicio = time(NULL);
+                procesos[num_procesos].detenido = 0; /* recien creado, no fue detenido */
                 strcpy(procesos[num_procesos].ruta, msg.ruta);
                 num_procesos++;
 
-                /* ahora respondemos con texto igual que los otros comandos,
-                   asi toad-cli puede leer siempre de la misma forma */
                 char respuesta[64];
                 snprintf(respuesta, sizeof(respuesta), "IID: %d\n", iid);
                 responder(respuesta);
@@ -128,17 +128,14 @@ int main() {
 
         //comando PS: responder con la tabla de procesos
         if (msg.comando == CMD_PS) {
-            /* armar el texto de respuesta con todos los procesos de la tabla */
             char respuesta[MAX_RESP];
             char linea[512];
 
-            /* cabecera de la tabla */
             snprintf(respuesta, sizeof(respuesta),
                      "%-6s %-8s %-10s %-10s %s\n",
                      "IID", "PID", "ESTADO", "UPTIME", "BINARIO");
 
             for (int i = 0; i < num_procesos; i++) {
-                /* calcular uptime: tiempo actual menos cuando se inicio */
                 time_t seg = time(NULL) - procesos[i].t_inicio;
                 int hh = (int)(seg / 3600);
                 int mm = (int)((seg % 3600) / 60);
@@ -146,7 +143,6 @@ int main() {
                 char uptime[16];
                 snprintf(uptime, sizeof(uptime), "%02d:%02d:%02d", hh, mm, ss);
 
-                /* nombre del estado */
                 char *nombre_estado;
                 if      (procesos[i].estado == RUNNING) nombre_estado = "RUNNING";
                 else if (procesos[i].estado == STOPPED) nombre_estado = "STOPPED";
@@ -168,33 +164,31 @@ int main() {
             responder(respuesta);
         }
 
-        /* aqui iremos agregando los otros comandos (stop, kill, status, zombie) */
-
         //comando STOP
-        if(msg.comando == CMD_STOP) {
+        if (msg.comando == CMD_STOP) {
             int idx = buscar_proceso(msg.iid, procesos, num_procesos);
 
-            if (idx == -1) { //manejo de error
+            if (idx == -1) {
                 responder("Error: IID no encontrado\n");
                 continue;
             }
 
             kill(procesos[idx].pid, SIGTERM);
-            procesos[idx].estado = STOPPED;
+            procesos[idx].estado   = STOPPED;
+            procesos[idx].detenido = 1; /* marcamos que fue detenido a proposito,
+                                           para que waitpid no lo sobreescriba a ZOMBIE */
             responder("Proceso detenido\n");
         }
 
-        //comando status, lo mismo que el ps pero para un proceso nmas.
+        //comando STATUS
         if (msg.comando == CMD_STATUS) {
             int idx = buscar_proceso(msg.iid, procesos, num_procesos);
             if (idx != -1) {
                 char respuesta[MAX_RESP];
-                
-                // calcula el uptime del proceso
+
                 time_t seg = time(NULL) - procesos[idx].t_inicio;
                 int hh = (int)(seg / 3600), mm = (int)((seg % 3600) / 60), ss = (int)(seg % 60);
 
-                // traduciendo a texto
                 char *st;
                 if      (procesos[idx].estado == RUNNING) st = "RUNNING";
                 else if (procesos[idx].estado == STOPPED) st = "STOPPED";
@@ -206,22 +200,56 @@ int main() {
                         procesos[idx].iid, procesos[idx].pid, procesos[idx].ruta, st, hh, mm, ss);
                 responder(respuesta);
             } else {
-                responder("Error: No se encontró el IID\n");
+                responder("Error: No se encontro el IID\n");
             }
         }
 
-
-        if (msg.comando == CMD_KILL) { //casi igual al stop 
+        //comando KILL
+        if (msg.comando == CMD_KILL) {
             int idx = buscar_proceso(msg.iid, procesos, num_procesos);
             if (idx != -1) {
-                // el signo negativo en el PID envía la señal a todo el grupo de procesos
-                kill(-procesos[idx].pid, SIGKILL); 
-                
-                procesos[idx].estado = STOPPED; 
+                kill(-procesos[idx].pid, SIGKILL); // signo negativo = todo el grupo de procesos
+                procesos[idx].estado   = STOPPED;
+                procesos[idx].detenido = 1; /* igual que stop, marcamos que fue intencional */
                 responder("Proceso y descendientes eliminados (SIGKILL).\n");
             } else {
                 responder("Error: IID no encontrado.\n");
             }
+        }
+
+        //comando ZOMBIE: listar solo los procesos que murieron solos (sin stop ni kill)
+        if (msg.comando == CMD_ZOMBIE) {
+            char respuesta[MAX_RESP];
+            char linea[512];
+
+            snprintf(respuesta, sizeof(respuesta),
+                     "%-6s %-8s %-10s %s\n",
+                     "IID", "PID", "UPTIME", "BINARIO");
+
+            int encontrados = 0;
+            for (int i = 0; i < num_procesos; i++) {
+                if (procesos[i].estado != ZOMBIE) continue; /* saltar los que no son zombie */
+
+                encontrados++;
+                time_t seg = time(NULL) - procesos[i].t_inicio;
+                int hh = (int)(seg / 3600);
+                int mm = (int)((seg % 3600) / 60);
+                int ss = (int)(seg % 60);
+                char uptime[16];
+                snprintf(uptime, sizeof(uptime), "%02d:%02d:%02d", hh, mm, ss);
+
+                snprintf(linea, sizeof(linea),
+                         "%-6d %-8d %-10s %s\n",
+                         procesos[i].iid, procesos[i].pid, uptime, procesos[i].ruta);
+
+                if (strlen(respuesta) + strlen(linea) < MAX_RESP - 1)
+                    strcat(respuesta, linea);
+            }
+
+            if (encontrados == 0)
+                strcat(respuesta, "(sin procesos zombie)\n");
+
+            responder(respuesta);
         }
 
     }

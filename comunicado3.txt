@@ -1,0 +1,58 @@
+holi paulap!!
+
+te explico lo que hice desde donde lo dejaste tú:
+
+implementé el comando zombie y arreglé un par de bugs relacionados con los estados.
+
+el primer bug era con el waitpid. cuando hacías stop o kill, el waitpid igual 
+marcaba el proceso como ZOMBIE en la siguiente iteracion del loop porque no sabia 
+que habia sido detenido a proposito. para arreglarlo agregue el campo "detenido" 
+al struct proceso en comun.h. vale 0 cuando el proceso esta corriendo normal, y 1 
+cuando fue parado con stop o kill. asi el waitpid revisa ese campo antes de marcar 
+ZOMBIE y si vale 1 lo deja tranquilo en STOPPED.
+
+con eso implementé el comando zombie. recorre la tabla y filtra solo los que tienen 
+estado ZOMBIE (o sea los que murieron solos, no los que paramos nosotros), y los 
+lista con su iid, pid, uptime y binario.
+
+el segundo bug era con el stop: cuando hacías stop y de inmediato ps, aparecia 
+ZOMBIE en vez de STOPPED. el problema era de timing, el proceso tardaba un poquito 
+en morir despues del SIGTERM y el waitpid lo agarraba antes de que pudieramos ver 
+STOPPED. el fix fue dos cosas: primero mover el detenido = 1 para ANTES del kill 
+(para que el waitpid no le gane de mano), y segundo agregar un waitpid bloqueante 
+especifico para ese proceso justo despues del kill, para que toadd espere a que 
+muera de verdad antes de responder.
+
+una cosa extra: con ayuda de claude agregué esta linea al principio de toadd.c:
+
+    #define _POSIX_C_SOURCE 200809L
+
+te explico para qué sirve. cuando compilamos con -std=c17, el compilador es estricto 
+con el estandar C17 puro. el problema es que funciones como kill(), waitpid(), 
+mkfifo() y setsid() no son parte del estandar C, son parte de POSIX que es el 
+estandar de sistemas Unix/Linux. sin esa linea, el compilador ve kill() y tira un 
+warning de "implicit declaration" porque no la reconoce en C17 puro.
+
+con el #define le estamos diciendo "ademas de C17, activa las funciones de POSIX 
+version 2008". el numero 200809L es la fecha del estandar: año 2008, mes 09. con 
+eso el compilador ya conoce todas las syscalls que usamos y el warning desaparece.
+
+sin la linea:
+    toadd.c: warning: implicit declaration of function 'kill'
+
+con la linea:
+    (sin warnings)
+
+resumen de archivos que cambie:
+- comun.h: agregue el campo "detenido" al struct proceso
+- toadd.c: arregle el waitpid, implemente zombie, arregle el bug del stop,
+           agregue #define _POSIX_C_SOURCE 200809L para eliminar el warning de kill()
+
+todo esta probado y funcionando:
+- zombie ✓
+- stop ahora muestra STOPPED correctamente ✓
+- deteccion automatica de zombies con waitpid ✓
+
+te dejo la limpieza del codigo para la entrega :)
+
+suerte!!
