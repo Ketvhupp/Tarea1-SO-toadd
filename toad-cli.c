@@ -1,11 +1,10 @@
-/*Qué va a hacer toad-cli:
-
-1- recibe comandos del usuario, o sea el comando de la terminal (como start)
-2- llena el struct mensaje para poder enviarlo por pipe
-3- lo mete en el pipe REQ_PIPE
-4- se queda esperando a que toadd le mande la respuesta por el pipe RES_PIPE
-
-*/
+/* toad-cli: interfaz de linea de comandos para interactuar con toadd.
+   
+   lo que hace:
+   1. recibe el comando del usuario desde la terminal
+   2. llena el struct mensaje y lo manda por REQ_PIPE
+   3. espera la respuesta de toadd por RES_PIPE
+   4. imprime el resultado */
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -16,9 +15,6 @@
 
 int main(int argc, char *argv[]) {
 
-    /* validar que escribieron al menos un comando.
-       antes era argc < 3 siempre, pero eso rompia comandos sin argumentos
-       como ps y zombie. ahora validamos por comando. */
     if (argc < 2) {
         printf("Uso: %s <comando> [ruta|IID]\n", argv[0]);
         printf("Comandos: start, stop, kill, ps, status, zombie\n");
@@ -26,9 +22,11 @@ int main(int argc, char *argv[]) {
     }
 
     mensaje msg;
-    memset(&msg, 0, sizeof(mensaje)); // Limpiar la caja por seguridad
+    memset(&msg, 0, sizeof(mensaje)); /* limpiar la estructura por seguridad */
 
-    // 2. Identificar el comando
+    /* identificar el comando y armar el mensaje.
+       validamos argc por separado en cada caso porque ps y zombie
+       no necesitan argumentos extra, pero start, stop, kill y status si. */
     if (strcmp(argv[1], "start") == 0) {
         if (argc < 3) {
             printf("Uso: %s start <ruta_del_binario>\n", argv[0]);
@@ -68,11 +66,11 @@ int main(int argc, char *argv[]) {
         msg.comando = CMD_ZOMBIE;
 
     } else {
-        printf("Comando no reconocido: %s\n", argv[1]); /*ahi deberian estar toditos paulap, ademas del caso donde el profe no sepa escribir*/
+        printf("Comando no reconocido: %s\n", argv[1]);
         return 1;
     }
 
-    // 3. ENVIAR la petición al Manager
+    /* enviar el mensaje a toadd por REQ_PIPE */
     int fd_req = open(REQ_PIPE, O_WRONLY);
     if (fd_req == -1) {
         perror("Error al conectar con toadd (esta corriendo?)");
@@ -81,9 +79,9 @@ int main(int argc, char *argv[]) {
     write(fd_req, &msg, sizeof(mensaje));
     close(fd_req);
 
-// 4. RECIBIR y mostrar la respuesta
-    /* todos los comandos ahora responden con texto, asi que leemos
-       siempre de la misma forma sin importar cual fue el comando */
+    /* recibir y mostrar la respuesta.
+       todos los comandos responden con texto, asi que siempre
+       leemos de la misma forma sin importar cual fue el comando. */
     char respuesta[MAX_RESP];
     int fd_res = open(RES_PIPE, O_RDONLY);
     if (fd_res == -1) {
@@ -92,11 +90,11 @@ int main(int argc, char *argv[]) {
     }
     ssize_t n = read(fd_res, respuesta, sizeof(respuesta) - 1);
     close(fd_res);
- 
+
     if (n > 0) {
         respuesta[n] = '\0';
         printf("%s", respuesta);
     }
- 
+
     return 0;
 }

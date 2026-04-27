@@ -1,9 +1,7 @@
-/*Para que toadd y toad-cli hablen el mismo idioma y se entiendan*/
+/* para que toadd y toad-cli hablen el mismo idioma y se entiendan */
 
 /* /tmp/ es el directorio temporal en donde todos los usuarios pueden
-escribir. lo que se guarda luego muere cuando reinicias el pc.
-
-solo para cambiar el nombre y no haya que escribir el largo tantas veces*/
+   escribir. lo que se guarda luego muere cuando reinicias el pc. */
 #include <stdio.h>
 #include <unistd.h>
 #include <stdlib.h>
@@ -14,16 +12,17 @@ solo para cambiar el nombre y no haya que escribir el largo tantas veces*/
 #include <time.h>
 #include <signal.h>
 
+/* rutas de los pipes en /tmp/ */
 #define REQ_PIPE "/tmp/toad_req"
 #define RES_PIPE "/tmp/toad_res"
 
+/* estados posibles de un proceso */
 #define RUNNING 1
 #define STOPPED 2
 #define ZOMBIE  3
 #define FAILED  4
 
-/* mismos numeros que antes, solo los deje
-   nombrados aqui para que sea mas facil de leer en el codigo */
+/* codigos de comando, un numero por cada accion que puede pedir toad-cli */
 #define CMD_START  1
 #define CMD_STOP   2
 #define CMD_PS     3
@@ -32,33 +31,28 @@ solo para cambiar el nombre y no haya que escribir el largo tantas veces*/
 #define CMD_ZOMBIE 6
 
 /* tamaño maximo del texto de respuesta que toadd manda por el pipe.
-   4096 bytes es suficiente para listar hasta 100 procesos con sus datos */
+   4096 bytes alcanza para listar hasta 100 procesos con todos sus datos */
 #define MAX_RESP 4096
 
-/* separe los struct entre mensaje y proceso para no mezclar logica interna
-   con comunicacion. no es necesario mandar pid y estado por el pipe. */
-
-/* solo para el pipe, comunicacion */
+/* struct para la comunicacion por pipe (toad-cli -> toadd).
+   mandamos todo en un solo viaje en bytes, asi el otro lado sabe
+   exactamente donde empieza y termina cada campo. */
 typedef struct {
-    int  comando;    /* que quiere hacer: CMD_START, CMD_STOP, etc. */
-    char ruta[256];  /* ruta al binario (solo se usa en start) */
-    int  iid;        /* a que proceso apunta (stop, kill, status) */
+    int  comando;    /* que accion ejecutar: CMD_START, CMD_STOP, etc. */
+    char ruta[256];  /* ruta al binario, solo se usa en start */
+    int  iid;        /* a que proceso apunta, se usa en stop, kill y status */
 } mensaje;
 
-/* para guardar procesos. gestion interna de toadd */
+/* struct para guardar la info de cada proceso. solo lo usa toadd internamente,
+   no viaja por el pipe. */
 typedef struct {
     int    iid;
     pid_t  pid;
     char   ruta[256];
     int    estado;
-    time_t t_inicio;  /* momento en que se inicio el proceso, para calcular uptime */
-    int    detenido;  /* 1 si fue parado a proposito con stop o kill,
+    time_t t_inicio;  /* cuando se inicio, para calcular el uptime */
+    int    detenido;  /* 1 si lo paramos nosotros con stop o kill,
                          0 si esta corriendo o murio solo.
-                         lo usamos para que waitpid no sobreescriba a ZOMBIE
-                         un proceso que ya marcamos como STOPPED. */
+                         sirve para que waitpid no marque como ZOMBIE
+                         un proceso que ya dejamos en STOPPED a proposito. */
 } proceso;
-
-/* por que usar struct?
-   mandamos el formulario completo por el pipe de un solo viaje. viaja en bytes.
-   si se manda la info suelta, el otro lado no sabe donde empieza el nombre
-   del programa y donde termina el ID */
