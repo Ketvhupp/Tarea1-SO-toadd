@@ -264,4 +264,4 @@ int main() {
 }
 
 /*decidi hacer que los pipes abran y cierren en cada iteración del bucle, 
-para evitar bloqueos de fifo y tener un modelo request/response más robusto y limpio*/
+para evitar bloqueos de fifo y tener un modelo request/response más limpio*/
